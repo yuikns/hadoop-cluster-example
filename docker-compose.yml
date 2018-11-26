@@ -1,0 +1,137 @@
+version: '3'
+# https://docs.docker.com/compose/compose-file/#service-configuration-reference
+
+services:
+  tidb:
+    image: pingcap/tidb:latest
+    hostname: tidb
+    # domainname: itermind
+    ports:
+      - "3306:3306"
+      - "10080:10080"
+    volumes:
+      - ./data/tidb:/data
+    networks:
+      - hadoopenv
+    restart: on-failure
+    command:
+      # https://github.com/pingcap/docs/blob/master/sql/server-command-option.md
+      - -P=3306
+      - --path=/data
+      - --store=mocktikv
+
+  master:
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    hostname: master
+    # domainname: itermind
+    restart: "no" # always, on-failure, unless-stopped
+    volumes:
+      - ./data/master/log:/var/log
+      - ./data/host:/mnt/host
+    depends_on:
+      - "tidb"
+    environment:
+      - CONTAINER=docker
+    networks:
+      - hadoopenv
+    command: ["/scripts/entrypoint-master.sh" ]
+    ports:
+      - 22 # ssh
+      - 19987 # yarn-proxyserver
+      # HDFS NameNode WebUI
+      - 50070 # Web UI to look at current status of HDFS, explore file system
+      - 50470 # Secure http service
+      # HDFS NameNode metadata service
+      - 9000  # File system metadata operations
+      # HDFS DataNode, All Slave Nodes
+      - 50075 # DataNode WebUI to access the status, logs etc.
+      - 50475 # Secure http service
+      - 50010 # Data transfer
+      - 50020 # Metadata operations
+      # HDFS Secondary NameNode
+      - 50090 # http, Checkpoint for NameNode metadata
+      # MapReduce JobTracker WebUI
+      - 50030
+      # MapReduce Job Tracker
+      - 8021 # For job submissions
+      # MapReduce Task Tracker Web UI and Shuffle, All Slave Nodes
+      - 50060
+      # MapReduce History Server WebUI
+      - 51111
+      # HBase HMaster
+      - 60000
+      - 60010 # The port for the HBase Master web UI. Set to -1 if you do not want the info server to run.
+      # HBase Region Server, All Slave Nodes
+      - 60020
+      - 60030 # http
+      # ZooKeeper
+      - 2888 # All ZooKeeper Nodes 
+      - 3888 # All ZooKeeper Nodes 
+      - 2181 # Expose to clients
+      # Yarn ref: https://hadoop.apache.org/docs/r2.4.1/hadoop-yarn/hadoop-yarn-common/yarn-default.xml
+      - 8032 # yarn.resourcemanager.address
+      - 8033 # yarn.resourcemanager.admin.address
+      - 8030 # yarn.resourcemanager.scheduler.address
+      - 8031 # yarn.resourcemanager.resource-tracker.address
+      - 8088 # yarn.resourcemanager.webapp.address
+      - 8090 # yarn.resourcemanager.webapp.https.address
+      # Spark
+      - 7077 # Submit job to cluster, join cluster
+      - 8080 # ui
+      - 4040 # driver webui
+      - 8081 # worker webui
+      - 18080 # History Server
+
+  slave:
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    hostname: slave0
+    # domainname: itermind
+    restart: always
+    volumes:
+      - ./data/slave0/log:/var/log
+      - ./data/host:/mnt/host
+    depends_on:
+      - "master"
+    environment:
+      - CONTAINER=docker
+    networks:
+      - hadoopenv
+    command: ["/scripts/entrypoint-slave.sh" ]
+    ports:
+      - 22 # ssh
+      # HDFS DataNode, All Slave Nodes
+      - 50075 # DataNode WebUI to access the status, logs etc.
+      - 50475 # Secure http service
+      - 50010 # Data transfer
+      - 50020 # Metadata operations
+      # HDFS Secondary NameNode
+      - 50090 # http, Checkpoint for NameNode metadata
+      # MapReduce Task: Tracker Web UI and Shuffle, All Slave Nodes
+      - 50060
+      # HBase Region Server, All Slave Nodes
+      - 60020
+      - 60030 # http
+      # ZooKeeper
+      - 2888 # All ZooKeeper Nodes 
+      - 3888 # All ZooKeeper Nodes 
+      - 2181 # Expose to clients
+      # Spark Worker
+      - 7077 # Submit job to cluster / join cluster
+
+networks:
+  hadoopenv:
+
+# list hdfs
+# sudo -u hdfs hdfs dfsadmin -report
+
+# check spark
+# val allExecutors = sc.getExecutorMemoryStatus.map(_._1)
+# val driverHost: String = sc.getConf.get("spark.driver.host")
+# allExecutors.filter(! _.split(":")(0).equals(driverHost)).toList
+
+# list yarn apps
+# yarn application -list
